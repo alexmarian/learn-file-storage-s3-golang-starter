@@ -1,13 +1,13 @@
 package main
 
 import (
-	"encoding/base64"
 	"fmt"
-	"io"
-	"net/http"
-
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
+	"io"
+	"mime"
+	"net/http"
+	"os"
 )
 
 func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Request) {
@@ -40,14 +40,27 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	file, header, err := r.FormFile("thumbnail")
+	mediaType, _, err := mime.ParseMediaType(header.Header.Get("Content-Type"))
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Couldn't get file", err)
+		respondWithError(w, http.StatusBadRequest, "Invalid Content-Type", err)
+		return
+	}
+	if mediaType != "image/jpeg" && mediaType != "image/png" {
+		respondWithError(w, http.StatusBadRequest, "Invalid file type", nil)
 		return
 	}
 	contentType := header.Header.Get("Content-Type")
-	imageBytes, err := io.ReadAll(file)
+	assetPath := getAssetPath(videoID, contentType)
+	assetDiskPath := cfg.getAssetDiskPath(assetPath)
+
+	dst, err := os.Create(assetDiskPath)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Couldn't read file", err)
+		respondWithError(w, http.StatusInternalServerError, "Unable to create file on server", err)
+		return
+	}
+	defer dst.Close()
+	if _, err = io.Copy(dst, file); err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error saving file", err)
 		return
 	}
 	video, err := cfg.db.GetVideo(videoID)
@@ -59,9 +72,8 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusUnauthorized, "Not your video", nil)
 		return
 	}
-	base64Image := base64.StdEncoding.EncodeToString(imageBytes)
-	base64ThumbnailUrl := fmt.Sprintf("data:%s;base64,%s", contentType, base64Image)
-	video.ThumbnailURL = &base64ThumbnailUrl
+	thumbnailUrl := cfg.getAssetURL(assetPath)
+	video.ThumbnailURL = &thumbnailUrl
 	err = cfg.db.UpdateVideo(video)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't update video", err)
