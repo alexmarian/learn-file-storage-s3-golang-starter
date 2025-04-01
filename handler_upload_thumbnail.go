@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
@@ -49,8 +51,13 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusBadRequest, "Invalid file type", nil)
 		return
 	}
-	contentType := header.Header.Get("Content-Type")
-	assetPath := getAssetPath(videoID, contentType)
+	fileName, err := cfg.getRandomName()
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't generate random ID", err)
+		return
+	}
+
+	assetPath := getAssetPath(fileName, mediaType)
 	assetDiskPath := cfg.getAssetDiskPath(assetPath)
 
 	dst, err := os.Create(assetDiskPath)
@@ -80,4 +87,11 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	respondWithJSON(w, http.StatusOK, video)
+}
+
+func (cfg *apiConfig) getRandomName() (string, error) {
+	random := make([]byte, 32)
+	_, err := rand.Read(random)
+	fileName := base64.RawURLEncoding.EncodeToString(random)
+	return fileName, err
 }
