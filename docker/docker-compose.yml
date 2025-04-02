@@ -8,6 +8,9 @@ services:
     environment:
       # LocalStack configuration: https://docs.localstack.cloud/references/configuration/
       - DEBUG=${DEBUG:-0}
+      - DATA_DIR=/var/lib/localstack/data
+      - PERSISTENCE=1
+      - S3_PERSISTENCE=true
     volumes:
-      - "${LOCALSTACK_VOLUME_DIR:-./volume}:/var/lib/localstack"
+      - "./localstack-data:/var/lib/localstack/data"
       - "/var/run/docker.sock:/var/run/docker.sock"

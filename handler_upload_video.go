@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -11,6 +13,7 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"os/exec"
 )
 
 func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request) {
@@ -66,18 +69,32 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	defer os.Remove(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't get video aspect ratio", err)
+		return
+	}
 	defer tempFile.Close()
 	_, err = io.Copy(tempFile, file)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't save file", err)
 		return
 	}
+	ratio, err := getVideoAspectRatio(tempFile.Name())
 	_, err = tempFile.Seek(0, io.SeekStart)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't seek file", err)
 		return
 	}
 	videoName, err := cfg.getRandomName()
+	switch ratio {
+	case "16:9":
+		videoName = "landscape/" + videoName
+	case "9:16":
+		videoName = "portrait/" + videoName
+	default:
+		videoName = "other/" + videoName
+	}
+
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't generate random ID", err)
 		return
@@ -98,4 +115,34 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	video.VideoURL = &videoUrl
 	cfg.db.UpdateVideo(video)
 
+}
+
+func getVideoAspectRatio(filePath string) (string, error) {
+	type FFProbeOutput struct {
+		Streams []struct {
+			DisplayAspectRatio string `json:"display_aspect_ratio"`
+		} `json:"streams"`
+	}
+	//ffprobe -v error -select_streams v:0 -show_entries stream=display_aspect_ratio -of default=noprint_wrappers=1:nokey=1 boots-video-horizontal.mp4
+	ffprobeCmd := exec.Command("ffprobe", "-v", "error", "-print_format", "json", "-show_streams", filePath)
+	result := bytes.Buffer{}
+	ffprobeCmd.Stdout = &result
+	err := ffprobeCmd.Run()
+	if err != nil {
+		return "", err
+	}
+	var output FFProbeOutput
+	err = json.Unmarshal(result.Bytes(), &output)
+	if err != nil {
+		return "", err
+	}
+	if len(output.Streams) == 0 {
+		return "", fmt.Errorf("no streams found")
+	}
+	ratio := output.Streams[0].DisplayAspectRatio
+	if ratio == "16:9" || ratio == "9:16" {
+		return ratio, nil
+
+	}
+	return "other", nil
 }
