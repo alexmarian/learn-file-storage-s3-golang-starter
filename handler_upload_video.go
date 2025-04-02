@@ -99,10 +99,18 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusInternalServerError, "Couldn't generate random ID", err)
 		return
 	}
+	fastStart, err := processVideoForFastStart(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't process video", err)
+		return
+	}
+	fastStartTempFile, err := os.Open(fastStart)
+	defer os.Remove(fastStart)
+	defer fastStartTempFile.Close()
 	_, err = cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
 		Bucket:      aws.String(cfg.s3Bucket),
 		Key:         aws.String(videoName),
-		Body:        tempFile,
+		Body:        fastStartTempFile,
 		ContentType: aws.String(mediaType),
 	})
 	if err != nil {
@@ -145,4 +153,16 @@ func getVideoAspectRatio(filePath string) (string, error) {
 
 	}
 	return "other", nil
+}
+
+func processVideoForFastStart(filePath string) (string, error) {
+	outputPath := filePath + "-faststart.mp4"
+	//ffprobe -v error -select_streams v:0 -show_entries stream=display_aspect_ratio -of default=noprint_wrappers=1:nokey=1 boots-video-horizontal.mp4
+	ffprobeCmd := exec.Command("ffmpeg", "-i", filePath, "-c", "copy", "-movflags", "faststart", "-f", "mp4", outputPath)
+	err := ffprobeCmd.Run()
+	if err != nil {
+		return "", err
+	}
+
+	return outputPath, nil
 }
